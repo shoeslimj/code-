@@ -20,69 +20,93 @@ try:
     from ctypes import windll
 except ImportError:
     windll = None
+
+# --- 전역 함수들 (Global Functions) ---
 WEATHER_API_KEY = "ad5c1b86467191a4ab639840195b08c4"
 
 def get_weather_info():
-        try:
-        # 서울의 위도와 경도
-            lat, lon = 37.5665, 126.9780 
-            url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=kr"
-        
-            response = requests.get(url, timeout=5).json()
-        
-            description = response['weather'][0]['description']
-            temp = response['main']['temp']
-            return f"서울: {description}, 현재 기온: {temp:.1f}°C"
-        except Exception as e:
-            print(f"날씨 정보 로딩 실패: {e}")
-            return "날씨 정보를 불러올 수 없습니다."
+    try:
+        lat, lon = 37.5665, 126.9780 
+        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=kr"
+        response = requests.get(url, timeout=5).json()
+        description = response['weather'][0]['description']
+        temp = response['main']['temp']
+        return f"서울: {description}, 현재 기온: {temp:.1f}°C"
+    except Exception as e:
+        print(f"날씨 정보 로딩 실패: {e}")
+        return "날씨 정보를 불러올 수 없습니다."
 
 def get_news_headlines(max_headlines=5):
     RSS_URL = "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"
     try:
         feed = feedparser.parse(RSS_URL)
-        
-        # 피드 파싱에 실패했거나, 뉴스 항목이 없는 경우를 대비
         if not feed.entries:
-            print("뉴스 피드를 파싱했으나 내용이 없습니다.")
             return [{"title": "새로운 뉴스가 없습니다.", "link": ""}]
-
-        headlines_with_links = []
-        for entry in feed.entries[:max_headlines]:
-            headlines_with_links.append({
-                "title": entry.title,
-                "link": entry.link
-            })
+        headlines_with_links = [{"title": entry.title, "link": entry.link} for entry in feed.entries[:max_headlines]]
         return headlines_with_links
-
     except Exception as e:
         print(f"뉴스 정보 로딩 중 예외 발생: {e}")
-        # ✅ 예외가 발생했을 때도 비어있지 않은 리스트를 반환하도록 수정
         return [{"title": "주요 뉴스를 불러오는 중 오류가 발생했습니다.", "link": ""}]
-        
+    
 class school_:
     @staticmethod
     def get_menu():
         url = "https://www.tw.ac.kr/diet/schedule.do?menuId=1733"
         try:
-            res = requests.get(url, timeout=5)
-            res.encoding = "utf-8"  # 한글 깨짐 방지
-            soup = BeautifulSoup(res.text, "html.parser")
+            # ▼▼▼▼▼ 태그 유무와 상관없이 작동하는 최종 Selector 입니다. ▼▼▼▼▼
+            # 테이블의 첫 번째 줄(tr)에 있는 th들 (요일)
+            DAY_SELECTOR = "tr:first-child th[scope='col']"
+            # 테이블의 두 번째 줄(tr)에 있는 td들 (메뉴)
+            MENU_SELECTOR = "tr:nth-child(2) td"
 
-            menu_table = soup.select("table.tbl tbody tr")
+            res = requests.get(url, timeout=5)
+            res.encoding = "utf-8"
+            soup = BeautifulSoup(res.text, "html.parser")
+            
+            day_elements = soup.select(DAY_SELECTOR)
+            menu_elements = soup.select(MENU_SELECTOR)
+
+            # 첫번째 요일 헤더('구분')는 제외
+            day_elements = day_elements[1:]
+
+            print("-" * 30)
+            print(f"[진단] 찾은 요일 항목 수: {len(day_elements)}개")
+            print(f"[진단] 찾은 메뉴 항목 수: {len(menu_elements)}개")
+
+            if not day_elements or not menu_elements or len(day_elements) != len(menu_elements):
+                print("[진단] 오류: 요일과 메뉴의 개수가 맞지 않습니다.")
+                return ["웹사이트 구조 분석 실패"]
+
             menus = []
-            for row in menu_table:
-                cols = row.find_all("td")
-                if len(cols) > 1:
-                    date = cols[0].get_text(strip=True)
-                    food = cols[1].get_text(strip=True)
-                    menus.append(f"{date}: {food}")
+            for day_element, menu_element in zip(day_elements, menu_elements):
+                # '월요일<br>09월 22일' 에서 '09월 22일' 부분만 추출
+                full_date_text = day_element.get_text(separator=' ').strip()
+                date_match = re.search(r'(\d{2})월 (\d{2})일', full_date_text)
+                
+                if not date_match: continue
+
+                month, day = date_match.groups()
+                date_part = f"{month}/{day}"
+
+                # <br> 태그를 ", "로 교체
+                for br in menu_element.find_all("br"):
+                    br.replace_with(", ")
+                
+                food = menu_element.get_text(strip=True)
+                
+                if food == "-" or not food:
+                    menus.append(f"{date_part}: 내용 없음")
+                else:
+                    menus.append(f"{date_part}: {food}")
+            
+            print("[진단] 메뉴 파싱 성공!")
             return menus
+            
         except Exception as e:
+            print(f"[진단] 코드 실행 중 예외 발생: {e}")
             return [f"메뉴 불러오기 실패: {e}"]
 
-
-
+# --- 메인 애플리케이션 클래스 ---
 class DesktopAssistant:
     def __init__(self, root):
         self.root = root
@@ -117,16 +141,16 @@ class DesktopAssistant:
         HEADER_COLOR = "#4B4B7F"
         BORDER_COLOR = "#EDE9F2"
         SECONDARY_BG_COLOR = "#F0F0F0"
+        HOVER_BG_COLOR = "#F0EDF9"  # 연한 보라색 배경
+        style.configure("Hover.TFrame", background=HOVER_BG_COLOR)
+        style.configure("Hover.TLabel", background=HOVER_BG_COLOR)
         
         style.configure("Main.TFrame", background=BG_COLOR)
         style.configure("Card.TFrame", background=CARD_BG_COLOR, borderwidth=1, relief="solid", bordercolor=BORDER_COLOR)
         style.configure("Header.TLabel", background=BG_COLOR, foreground=HEADER_COLOR, font=("맑은 고딕", 20, "bold"))
-        
-        # --- [수정] 새로운 시계 스타일 ---
         style.configure("MainClock.TLabel", background=BG_COLOR, foreground=HEADER_COLOR, font=("맑은 고딕", 14, "bold"))
         style.configure("SubClock.TLabel", background=BG_COLOR, foreground=TEXT_COLOR, font=("맑은 고딕", 9))
         style.configure("WorldClock.TCombobox", foreground=TEXT_COLOR)
-
         style.configure("CardTitle.TLabel", background=CARD_BG_COLOR, foreground=HEADER_COLOR, font=("맑은 고딕", 14, "bold"))
         style.configure("CardBody.TLabel", background=CARD_BG_COLOR, foreground=TEXT_COLOR, font=("맑은 고딕", 10))
         style.configure("ScheduleTime.TLabel", background=CARD_BG_COLOR, foreground=ACCENT_COLOR, font=("맑은 고딕", 11, "bold"))
@@ -135,91 +159,66 @@ class DesktopAssistant:
         style.map("Accent.TButton", background=[('active', ACCENT_ACTIVE_COLOR)])
         style.configure("Card.TButton", font=("맑은 고딕", 10), background=SECONDARY_BG_COLOR, foreground=TEXT_COLOR, borderwidth=1, bordercolor="#DCDCDC")
         style.map("Card.TButton", background=[('active', '#E0E0E0')])
-        style.configure("Modern.TEntry", bordercolor=BORDER_COLOR, lightcolor=BORDER_COLOR, darkcolor=BORDER_COLOR, fieldbackground="white", foreground=TEXT_COLOR)
+        style.configure("Modern.TEntry", bordercolor=BORDER_COLOR, lightcolor=BORDER_COLOR, darkcolor=BORDER_COLOR, fieldbackground="white", foreground=TEXT_COLOR, font=("맑은 고딕", 10))
         style.configure("Modern.Vertical.TScrollbar", troughcolor=BG_COLOR, bordercolor=BG_COLOR, background="#D3D3D3", arrowcolor=TEXT_COLOR)
         style.configure("Card.TCheckbutton", background=CARD_BG_COLOR, font=("맑은 고딕", 10), foreground=TEXT_COLOR)
-        style.map('Card.TCheckbutton',
-          indicatorcolor=[('selected', ACCENT_COLOR), ('!selected', '#d3d3d3')],
-          background=[('active', '#f5f5f5')])
+        style.map('Card.TCheckbutton', indicatorcolor=[('selected', ACCENT_COLOR), ('!selected', '#d3d3d3')], background=[('active', '#f5f5f5')])
 
-
-# --- 대시보드 페이지 ---
+# --- 대시보드 페이지 클래스 ---
 class DashboardPage(ttk.Frame):
-    def clear_focus(self, event):
-        """이벤트가 발생한 위젯의 포커스를 해제하고 메인 프레임으로 옮깁니다."""
-        self.focus_set()
-    
     def __init__(self, parent, controller):
         super().__init__(parent, style="Main.TFrame")
         self.controller = controller
-
         self.todo_file = "todo_list.json"
         self.todo_items = self.load_todo_items()
-        
         self.schedule_file = "schedule.json"
         self.schedule_data = self.load_schedule()
-
-        self.available_timezones = {
-            "뉴욕": "America/New_York", "런던": "Europe/London", "파리": "Europe/Paris",
-            "도쿄": "Asia/Tokyo", "시드니": "Australia/Sydney", "베이징": "Asia/Shanghai",
-            "모스크바": "Europe/Moscow"
-        }
+        self.available_timezones = {"뉴욕": "America/New_York", "런던": "Europe/London", "파리": "Europe/Paris", "도쿄": "Asia/Tokyo", "시드니": "Australia/Sydney", "베이징": "Asia/Shanghai", "모스크바": "Europe/Moscow"}
         self.selected_city_1 = tk.StringVar(value="뉴욕")
         self.selected_city_2 = tk.StringVar(value="도쿄")
         
         main_frame = ttk.Frame(self, style="Main.TFrame", padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # --- [수정] 헤더 UI 구성 ---
         header_frame = ttk.Frame(main_frame, style="Main.TFrame")
         header_frame.pack(fill=tk.X, pady=(0, 20))
         
         ttk.Label(header_frame, text="My Dashboard", style="Header.TLabel").pack(side=tk.LEFT)
         
-        # 시계를 담을 컨테이너 프레임
         clock_container = ttk.Frame(header_frame, style="Main.TFrame")
         clock_container.pack(side=tk.RIGHT)
-
-        # 메인 시계 (대한민국)
         self.main_clock_label = ttk.Label(clock_container, text="--:--:--", style="MainClock.TLabel")
         self.main_clock_label.pack(anchor="e")
         self.main_date_label = ttk.Label(clock_container, text="----년 --월 --일 (-)", style="SubClock.TLabel")
         self.main_date_label.pack(anchor="e")
 
-        # 세계 시계 1
         world_clock_frame_1 = ttk.Frame(clock_container, style="Main.TFrame")
         world_clock_frame_1.pack(anchor="e", pady=(5,0))
         self.world_clock_label_1 = ttk.Label(world_clock_frame_1, text="--:--", style="SubClock.TLabel", width=10, anchor="e")
         self.world_clock_label_1.pack(side=tk.RIGHT)
-        city_combo_1 = ttk.Combobox(world_clock_frame_1, textvariable=self.selected_city_1, 
-                                    values=list(self.available_timezones.keys()), state="readonly", 
-                                    width=6, style="WorldClock.TCombobox")
+        city_combo_1 = ttk.Combobox(world_clock_frame_1, textvariable=self.selected_city_1, values=list(self.available_timezones.keys()), state="readonly", width=6, style="WorldClock.TCombobox")
         city_combo_1.pack(side=tk.RIGHT, padx=(0, 5))
-        city_combo_1.bind("<<ComboboxSelected>>", self.clear_focus) # 강조 해제용
+        city_combo_1.bind("<<ComboboxSelected>>", self.clear_focus)
         
-        # 세계 시계 2
         world_clock_frame_2 = ttk.Frame(clock_container, style="Main.TFrame")
         world_clock_frame_2.pack(anchor="e")
         self.world_clock_label_2 = ttk.Label(world_clock_frame_2, text="--:--", style="SubClock.TLabel", width=10, anchor="e")
         self.world_clock_label_2.pack(side=tk.RIGHT)
-        city_combo_2 = ttk.Combobox(world_clock_frame_2, textvariable=self.selected_city_2,
-                                    values=list(self.available_timezones.keys()), state="readonly", 
-                                    width=6, style="WorldClock.TCombobox")
+        city_combo_2 = ttk.Combobox(world_clock_frame_2, textvariable=self.selected_city_2, values=list(self.available_timezones.keys()), state="readonly", width=6, style="WorldClock.TCombobox")
         city_combo_2.pack(side=tk.RIGHT, padx=(0, 5))
         city_combo_2.bind("<<ComboboxSelected>>", self.clear_focus)
 
         dashboard_frame = ttk.Frame(main_frame, style="Main.TFrame")
         dashboard_frame.pack(fill=tk.BOTH, expand=True)
-     
         dashboard_frame.grid_columnconfigure(0, weight=2, uniform="group1")
         dashboard_frame.grid_columnconfigure(1, weight=3, uniform="group1")
-        dashboard_frame.grid_rowconfigure(0, weight=1)
-        dashboard_frame.grid_rowconfigure(1, weight=1)
+        dashboard_frame.grid_rowconfigure(0, weight=1, minsize=300) # 최소 높이 지정
+        dashboard_frame.grid_rowconfigure(1, weight=1, minsize=300) # 최소 높이 지정
 
         left_frame = ttk.Frame(dashboard_frame, style="Main.TFrame")
         left_frame.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 20))
         left_frame.grid_rowconfigure(0, weight=1)
-        left_frame.grid_rowconfigure(1, weight=1)
+        left_frame.grid_rowconfigure(1, minsize=200) # 빠른 실행 도구 최소 높이
 
         right_frame = ttk.Frame(dashboard_frame, style="Main.TFrame")
         right_frame.grid(row=0, column=1, rowspan=2, sticky="nsew")
@@ -233,118 +232,200 @@ class DashboardPage(ttk.Frame):
         self.create_schedule_card(right_frame).grid(row=1, column=0, sticky="nsew")
 
         self.update_clock()
+        self.after(100, self.load_initial_data)
 
+        # 주요 배경 프레임들을 클릭했을 때 clear_selections 함수가 호출되도록 설정
+        main_frame.bind("<Button-1>", self.clear_selections)
+        dashboard_frame.bind("<Button-1>", self.clear_selections)
+
+    def clear_selections(self, event=None):
+       # 선택된 포커스 효과 제거
+        self.focus_set()
+        self.todo_listbox.selection_clear(0, tk.END)
+
+    def clear_focus(self, event):
+        self.focus_set()
+
+    def load_initial_data(self):
+        """UI가 생성된 후, 네트워크 데이터를 비동기적으로 로드합니다."""
+        # 현재 날씨 업데이트
+        self.weather_label.config(text=get_weather_info())
+
+        # 뉴스 헤드라인 업데이트
+        for widget in self.news_container.winfo_children():
+            widget.destroy()
+            
+        headlines_data = get_news_headlines()
+        for data in headlines_data:
+            title = data["title"]
+            link = data["link"]
+            display_text = title if len(title) < 50 else title[:50] + "..."
+            news_label = ttk.Label(self.news_container, text=f"  - {display_text}", style="CardBody.TLabel")
+            news_label.pack(anchor="w", padx=10)
+            news_label.bind("<Enter>", self.on_hover)
+            news_label.bind("<Leave>", self.on_leave)
+            news_label.bind("<Button-1>", lambda event, url=link: self.open_link(url))
+
+        # 학식 메뉴 업데이트
+        self.update_menu()
+    
     def update_clock(self):
         now_local = datetime.now()
-        
-        weekday_map = ["월", "화", "수", "목", "금", "토", "일"]
-        weekday = weekday_map[now_local.weekday()]
-        
-        # --- 메인 시계 ---
+        weekday = ["월", "화", "수", "목", "금", "토", "일"][now_local.weekday()]
         main_time_str = now_local.strftime("%H:%M:%S")
         main_date_str = now_local.strftime(f"%Y년 %m월 %d일 ({weekday})")
         self.main_clock_label.config(text=main_time_str)
         self.main_date_label.config(text=main_date_str)
-
-        # --- 세계 시계 ---
         if pytz:
             now_utc = datetime.now(pytz.utc)
-            cities_to_display = [
-                (self.selected_city_1.get(), self.world_clock_label_1),
-                (self.selected_city_2.get(), self.world_clock_label_2)
-            ]
-            for city_name, city_label in cities_to_display:
+            for city_name, city_label in [(self.selected_city_1.get(), self.world_clock_label_1), (self.selected_city_2.get(), self.world_clock_label_2)]:
                 try:
-                    timezone_str = self.available_timezones[city_name]
-                    target_tz = pytz.timezone(timezone_str)
+                    target_tz = pytz.timezone(self.available_timezones[city_name])
                     target_time = now_utc.astimezone(target_tz)
                     city_time_str = target_time.strftime("%p %I:%M").replace("AM", "오전").replace("PM", "오후")
                     city_label.config(text=city_time_str)
                 except Exception:
                     city_label.config(text="--:--")
-        
         self.update_next_class_info(now_local, weekday)
         self.after(1000, self.update_clock)
         
     def update_next_class_info(self, now_local, today_weekday_str):
-        next_class = None
+        target_class = None
+        is_in_session = False  # 현재 수업 중인지 상태를 기록하는 변수
+
         if self.schedule_data and today_weekday_str in self.schedule_data:
             today_schedule = self.schedule_data[today_weekday_str]
             current_time = now_local.time()
-            for class_info in today_schedule:
-                start_time = time.fromisoformat(class_info["start"])
-                if start_time > current_time:
-                    next_class = class_info
-                    break
-        if next_class:
-            self.schedule_time_label.config(text=f"🕒 {next_class['start']} ~ {next_class['end']}")
-            self.schedule_subject_label.config(text=f"{next_class['subject']}")
-            self.schedule_room_label.config(text=f"🏫 {next_class['room']}")
+
+            if today_schedule:
+                for class_info in today_schedule:
+                    start_time = time.fromisoformat(class_info["start"])
+                    end_time = time.fromisoformat(class_info["end"]) # 종료 시간도 가져옴
+
+                    # 1. '현재 진행 중인 수업'이 있는지 먼저 확인
+                    if start_time <= current_time < end_time:
+                        target_class = class_info
+                        is_in_session = True
+                        break  # 현재 수업을 찾았으므로 더 이상 찾을 필요 없음
+
+                    # 2. '다가올 다음 수업'이 있는지 확인
+                    if start_time > current_time:
+                        target_class = class_info
+                        is_in_session = False
+                        break  # 가장 가까운 다음 수업을 찾았으므로 더 이상 찾을 필요 없음
+
+        # --- 찾은 결과를 바탕으로 UI 업데이트 ---
+        if target_class:
+            # 'is_in_session' 값에 따라 다른 상태 메시지를 표시
+            status_icon = "🔥" if is_in_session else "🕒"
+            status_text = "현재 수업" if is_in_session else "다음 수업"
+
+            self.schedule_time_label.config(text=f"{status_icon} {status_text}: {target_class['start']} ~ {target_class['end']}")
+            self.schedule_subject_label.config(text=f"{target_class['subject']}")
+            self.schedule_room_label.config(text=f"🏫 {target_class['room']}")
         else:
+            # 보여줄 수업이 없으면 (모든 수업이 종료되었으면)
             self.schedule_time_label.config(text="✅")
             self.schedule_subject_label.config(text="오늘의 수업이 모두 종료되었습니다.")
             self.schedule_room_label.config(text="")
-
-    def create_schedule_card(self, parent):
-        frame = self.create_card_frame(parent, "📚 다음 수업 & 학식")
-
-        # --- 1. 다음 수업 정보 표시 부분 ---
-        self.schedule_time_label = ttk.Label(frame, text="시간표 정보 로딩 중...", style="ScheduleTime.TLabel")
-        self.schedule_time_label.pack(anchor="w", padx=10, pady=(0, 5))
-        
-        self.schedule_subject_label = ttk.Label(frame, text="", style="ScheduleSubject.TLabel")
-        self.schedule_subject_label.pack(anchor="w", padx=10, pady=(0, 5))
-        
-        self.schedule_room_label = ttk.Label(frame, text="", style="CardBody.TLabel")
-        self.schedule_room_label.pack(anchor="w", padx=10)
-
-        # --- 2. 구분선 ---
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=15)
-
-        # --- 3. 학식 정보 표시 부분 ---
-        self.menu_label = ttk.Label(frame, text="🍚 오늘의 학식: 로딩 중...", style="CardBody.TLabel")
-        self.menu_label.pack(anchor="w", padx=10)
-
-        # --- 4. 카드 생성 시 바로 학식 메뉴 업데이트 실행 ---
-        self.update_menu()
-
-        return frame
-        
-    def load_schedule(self):
-        if not os.path.exists(self.schedule_file): return {}
-        try:
-            with open(self.schedule_file, 'r', encoding='utf-8') as f: return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError): return {}
 
     def create_card_frame(self, parent, title):
         frame = ttk.Frame(parent, style="Card.TFrame", padding=20)
         ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(fill=tk.X, anchor="w", pady=(0, 15))
         return frame
-    
+        
+    def create_schedule_card(self, parent):
+        frame = self.create_card_frame(parent, "📚 다음 수업 & 학식")
+        self.schedule_time_label = ttk.Label(frame, text="시간표 정보 로딩 중...", style="ScheduleTime.TLabel")
+        self.schedule_time_label.pack(anchor="w", padx=10, pady=(0, 5))
+        self.schedule_subject_label = ttk.Label(frame, text="", style="ScheduleSubject.TLabel")
+        self.schedule_subject_label.pack(anchor="w", padx=10, pady=(0, 5))
+        self.schedule_room_label = ttk.Label(frame, text="", style="CardBody.TLabel")
+        self.schedule_room_label.pack(anchor="w", padx=10)
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=15)
+        self.menu_label = ttk.Label(frame, text="🍚 오늘의 학식: 로딩 중...", style="CardBody.TLabel")
+        self.menu_label.pack(anchor="w", padx=10)
+        return frame
+        
+    def create_briefing_card(self, parent):
+        frame = self.create_card_frame(parent, "🌤️ 오늘의 브리핑")
+
+        # --- 1. 현재 날씨 정보 ---
+        # 클릭하면 날씨 사이트로 이동하도록 cursor와 bind를 추가합니다.
+        self.weather_label = ttk.Label(frame, text="날씨 정보 로딩 중...", style="CardBody.TLabel", font=("맑은 고딕", 11, "bold"), cursor="hand2")
+        self.weather_label.pack(anchor="w", padx=10, pady=(0, 15))
+        self.weather_label.bind("<Button-1>", self.open_weather_website)
+
+        # --- 2. 구분선 ---
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=(0, 15))
+
+        # --- 3. 주요 뉴스 헤드라인 ---
+        ttk.Label(frame, text="📰 주요 뉴스", style="CardBody.TLabel", font=("맑은 고딕", 10, "bold")).pack(anchor="w", padx=10, pady=(0, 5))
+        
+        # 뉴스가 표시될 컨테이너
+        self.news_container = ttk.Frame(frame, style="Card.TFrame")
+        self.news_container.pack(fill=tk.X, anchor="w")
+        ttk.Label(self.news_container, text="  - 로딩 중...", style="CardBody.TLabel").pack(anchor="w", padx=10)
+
+        return frame
+
+
     def create_tools_card(self, parent):
         frame = self.create_card_frame(parent, "🛠️ 빠른 실행 도구")
-        ttk.Button(frame, text="📂 파일 정리 도구 실행", 
-                   command=lambda: self.controller.show_frame("FileOrganizerPage"), 
-                   style="Accent.TButton").pack(fill=tk.X, ipady=8, pady=(0, 10))
-        ttk.Button(frame, text="🎵 YouTube Music 열기", 
-                   command=self.open_youtube_music, 
-                   style="Accent.TButton").pack(fill=tk.X, ipady=8, pady=(0, 10))
-        ttk.Button(frame, text="🌐 Google 열기", 
-                   command=self.open_chrome, 
-                   style="Accent.TButton").pack(fill=tk.X, ipady= 8)
+        ttk.Button(frame, text="📂 파일 정리 도구 실행", command=lambda: self.controller.show_frame("FileOrganizerPage"), style="Accent.TButton").pack(fill=tk.X, ipady=8, pady=(0, 10))
+        ttk.Button(frame, text="🎵 YouTube Music 열기", command=self.open_youtube_music, style="Accent.TButton").pack(fill=tk.X, ipady=8, pady=(0, 10))
+        ttk.Button(frame, text="🌐 Google 열기", command=self.open_chrome, style="Accent.TButton").pack(fill=tk.X, ipady= 8)
         return frame
+
+    def create_todo_card(self, parent):
+        frame = self.create_card_frame(parent, "✅ 할 일 목록 (To-Do List)")
+        list_container = ttk.Frame(frame, style="Card.TFrame")
+        list_container.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        scrollbar = ttk.Scrollbar(list_container, orient=tk.VERTICAL, style="Modern.Vertical.TScrollbar")
+        self.todo_listbox = tk.Listbox(list_container, yscrollcommand=scrollbar.set, font=("맑은 고딕", 10), relief=tk.FLAT, borderwidth=0, selectbackground="#E8E2F7", activestyle="none", highlightthickness=0)
+        scrollbar.config(command=self.todo_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.todo_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        entry_frame = ttk.Frame(frame, style="Card.TFrame")
+        entry_frame.pack(fill=tk.X, pady=(5, 0))
+        entry_frame.columnconfigure(0, weight=1)
+        self.todo_entry = tk.Entry(entry_frame, font=("맑은 고딕", 10), relief=tk.FLAT, bg="white", fg="#5D5D7A", highlightthickness=1, highlightbackground="#EDE9F2")
+        self.todo_entry.grid(row=0, column=0, sticky="ew", ipady=5)
+        ttk.Button(entry_frame, text="추가", command=self.add_todo_item, style="Card.TButton", width=5).grid(row=0, column=1, padx=(5,0))
+        button_frame = ttk.Frame(frame, style="Card.TFrame")
+        button_frame.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(button_frame, text="선택 삭제", command=self.remove_todo_item, style="Card.TButton").pack(side=tk.RIGHT)
+        ttk.Button(button_frame, text="강조/해제", command=self.highlight_todo_item, style="Card.TButton").pack(side=tk.RIGHT, padx=(0, 5))
+        self.update_todo_listbox()
+        return frame
+
+    def load_schedule(self):
+        if not os.path.exists(self.schedule_file):
+        # 터미널에 파일이 없다고 출력합니다.
+            print(f"[진단] '{self.schedule_file}' 파일을 찾을 수 없습니다. 파이썬 파일과 같은 폴더에 있는지 확인하세요.")
+            return {}
+        try:
+            with open(self.schedule_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # 터미널에 파일 로딩 성공 및 내용 일부를 출력합니다.
+                print(f"[진단] '{self.schedule_file}' 파일을 성공적으로 불러왔습니다.")
+                return data
+        except (json.JSONDecodeError, FileNotFoundError):
+        # 터미널에 JSON 형식 오류를 출력합니다.
+            print(f"[진단] '{self.schedule_file}' 파일의 형식이 잘못되었습니다. (예: 쉼표, 괄호 문제)")
+            return {}
+
+    def load_todo_items(self):
+        if not os.path.exists(self.todo_file): return []
+        try:
+            with open(self.todo_file, 'r', encoding='utf-8') as f: return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError): return []
+    
     def open_youtube_music(self):
         webbrowser.open_new_tab("https://music.youtube.com")
 
     def open_chrome(self):
         webbrowser.open_new_tab("https://www.google.com")
-
-    def create_todo_card(self, parent):
-        frame = self.create_card_frame(parent, "✅ 할 일 목록 (To-Do List)")
-        list_frame = ttk.Frame(frame, style="Card.TFrame")
-        list_frame.pack(fill=tk.BOTH, expand=True)
-        # ... (이하 할 일 목록 UI 및 로직은 이전과 동일)
-        return frame
 
     def on_hover(self, event):
         event.widget.configure(font=("맑은 고딕", 10, "bold"), cursor="hand2")
@@ -356,75 +437,16 @@ class DashboardPage(ttk.Frame):
         if url:
             webbrowser.open_new_tab(url)
 
-    def create_briefing_card(self, parent):
-        frame = self.create_card_frame(parent, "🌤️ 오늘의 브리핑")
-        ttk.Label(frame, text="날씨 정보 로딩 중...", style="CardBody.TLabel").pack(padx=10, pady=10)
-        # --- 날씨 정보 표시 ---
-        weather_label = ttk.Label(frame, text="날씨 정보 로딩 중...", style="CardBody.TLabel", font=("맑은 고딕", 11, "bold"))
-        weather_label.pack(anchor="w", padx=10, pady=(0, 15))
-        weather_label.config(text=get_weather_info()) # 함수 호출하여 날씨 업데이트
-
-        # --- 구분선 ---
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=(0, 15))
-
-        # --- 주요 뉴스 헤드라인 표시 ---
-        news_title_label = ttk.Label(frame, text="📰 주요 뉴스", style="CardBody.TLabel", font=("맑은 고딕", 10, "bold"))
-        news_title_label.pack(anchor="w", padx=10, pady=(0, 5))
-
-        # --- [수정] 뉴스 헤드라인 표시 루프 변경 ---
-        headlines_data = get_news_headlines() # 이제 제목과 링크가 함께 들어옴
-        
-        for data in headlines_data:
-            title = data["title"]
-            link = data["link"]
-
-            display_text = title if len(title) < 50 else title[:50] + "..."
-            news_label = ttk.Label(frame, text=f"  - {display_text}", style="CardBody.TLabel")
-            news_label.pack(anchor="w", padx=10)
-            
-            # --- 이벤트 바인딩 추가 ---
-            # 1. 마우스를 올렸을 때 (Enter)
-            news_label.bind("<Enter>", self.on_hover)
-            # 2. 마우스가 벗어났을 때 (Leave)
-            news_label.bind("<Leave>", self.on_leave)
-            # 3. 마우스를 클릭했을 때 (Button-1)
-            # lambda를 사용하여 클릭 시 실행될 함수에 현재 'link'를 전달
-            news_label.bind("<Button-1>", lambda event, url=link: self.open_link(url))
-
-        return frame
-        
-    def load_todo_items(self):
-        if not os.path.exists(self.todo_file): return []
-        try:
-            with open(self.todo_file, 'r', encoding='utf-8') as f: return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError): return []
-
-        # --- 학식 표시 부분 ---
-        self.menu_label = ttk.Label(frame, text="🍚 오늘의 학식: 로딩 중...", style="CardBody.TLabel")
-        self.menu_label.pack(anchor="w", padx=10)
-
-        # 카드 생성 시 바로 학식 불러오기
-        self.update_menu()
-
-        return frame
-
-    # DashboardPage 클래스 내부
-
-    # DashboardPage 클래스 내부에 추가 (기존 것은 삭제)
-
     def update_menu(self):
         menus = school_.get_menu()
         if menus and "메뉴 불러오기 실패" not in menus[0]:
             today_str = datetime.now().strftime("%m/%d")
-            
             found_menu = None
             for menu_string in menus:
-                # "09/21(일): 메뉴..." 형식에서 날짜 부분("09/21")만 추출
                 date_part = menu_string.split('(')[0]
                 if date_part == today_str:
                     found_menu = menu_string
                     break
-            
             if found_menu:
                 display_menu = found_menu.split(': ', 1)[1]
                 self.menu_label.config(text="🍚 오늘의 학식: " + display_menu)
@@ -433,33 +455,42 @@ class DashboardPage(ttk.Frame):
         else:
             self.menu_label.config(text=menus[0] if menus else "🍚 메뉴를 불러올 수 없습니다.")
 
+    def open_weather_website(self, event=None):
+        """OpenWeatherMap의 서울 날씨 페이지를 엽니다."""
+        webbrowser.open_new_tab("https://openweathermap.org/city/1835848")
 
-# --- FileOrganizerPage 클래스 (이전과 동일) ---
-class FileOrganizerPage(ttk.Frame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, style="Main.TFrame")
-        # ... (이하 파일 정리기 페이지의 모든 UI와 로직은 이전과 동일)
+    def on_forecast_enter(self, event, widgets):
+        """마우스가 위젯에 들어왔을 때 강조 효과를 적용합니다."""
+        for widget in widgets:
+            # ttk 위젯 종류에 따라 다른 스타일을 적용합니다.
+            if isinstance(widget, ttk.Frame):
+                widget.config(style="Hover.TFrame")
+            else:
+                widget.config(style="Hover.TLabel")
 
-if __name__ == "__main__":
-    if platform.system() == "Windows" and windll is not None:
-        try:
-            windll.shcore.SetProcessDPIAwareness(1)
-        except AttributeError: pass
-
-    root = tk.Tk()
-    app = DesktopAssistant(root)
-    root.mainloop()
-
+    def on_forecast_leave(self, event, widgets):
+        """마우스가 위젯에서 벗어났을 때 강조 효과를 해제합니다."""
+        for widget in widgets:
+            # 원래의 기본 스타일로 되돌립니다.
+            if isinstance(widget, ttk.Frame):
+                widget.config(style="Card.TFrame")
+            else:
+                widget.config(style="CardBody.TLabel")
+    
     def save_todo_items(self):
         with open(self.todo_file, 'w', encoding='utf-8') as f:
             json.dump(self.todo_items, f, ensure_ascii=False, indent=4)
             
     def update_todo_listbox(self):
         self.todo_listbox.delete(0, tk.END)
-        for item in self.todo_items:
+        for index, item in enumerate(self.todo_items):
             self.todo_listbox.insert(tk.END, " " + item["task"])
-            if item.get("highlighted", False):
-                self.todo_listbox.itemconfig(tk.END, {'fg': '#6A5ACD', 'font': ("맑은 고딕", 11, "bold")})
+        if item.get("highlighted", False):
+            # font 옵션을 제거하고 색상만 변경합니다.
+            self.todo_listbox.itemconfig(index, {'fg': '#6A5ACD'})
+        else:
+            # font 옵션을 제거하고 기본 색상으로 되돌립니다.
+            self.todo_listbox.itemconfig(index, {'fg': '#5D5D7A'})
     
     def add_todo_item(self):
         task = self.todo_entry.get()
@@ -485,13 +516,11 @@ if __name__ == "__main__":
         self.save_todo_items()
         self.update_todo_listbox()
 
-
-# --- FileOrganizerPage 클래스 ---
+# --- 파일 정리기 페이지 클래스 ---
 class FileOrganizerPage(ttk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, style="Main.TFrame")
         self.controller = controller
-        
         self.folder_path_var = tk.StringVar()
         self.dry_run_var = tk.BooleanVar(value=True)
         
@@ -501,13 +530,8 @@ class FileOrganizerPage(ttk.Frame):
         header_frame = ttk.Frame(main_frame, style="Main.TFrame")
         header_frame.pack(fill=tk.X, pady=(0, 20))
         
-        back_button = ttk.Button(header_frame, text="← 뒤로가기", 
-                                 command=lambda: controller.show_frame("DashboardPage"),
-                                 style="Card.TButton")
-        back_button.pack(side=tk.LEFT)
-        
-        header_label = ttk.Label(header_frame, text="파일 정리 도구", style="Header.TLabel")
-        header_label.pack(side=tk.LEFT, padx=20)
+        ttk.Button(header_frame, text="← 뒤로가기", command=lambda: controller.show_frame("DashboardPage"), style="Card.TButton").pack(side=tk.LEFT)
+        ttk.Label(header_frame, text="파일 정리 도구", style="Header.TLabel").pack(side=tk.LEFT, padx=20)
 
         organizer_card = ttk.Frame(main_frame, style="Card.TFrame", padding=20)
         organizer_card.pack(fill=tk.BOTH, expand=True)
@@ -517,10 +541,8 @@ class FileOrganizerPage(ttk.Frame):
         step1_frame.columnconfigure(0, weight=1)
 
         ttk.Label(step1_frame, text="STEP 1: 정리할 폴더 선택", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
-        entry = ttk.Entry(step1_frame, textvariable=self.folder_path_var, font=("맑은 고딕", 10), style="Modern.TEntry")
-        entry.grid(row=1, column=0, sticky="ew", ipady=5)
-        button = ttk.Button(step1_frame, text="찾아보기...", command=self.select_folder, style="Card.TButton")
-        button.grid(row=1, column=1, padx=(10,0))
+        ttk.Entry(step1_frame, textvariable=self.folder_path_var, font=("맑은 고딕", 10), style="Modern.TEntry").grid(row=1, column=0, sticky="ew", ipady=5)
+        ttk.Button(step1_frame, text="찾아보기...", command=self.select_folder, style="Card.TButton").grid(row=1, column=1, padx=(10,0))
         
         step2_frame = ttk.Frame(organizer_card, style="Card.TFrame")
         step2_frame.pack(fill=tk.X, pady=(0, 20))
@@ -531,8 +553,7 @@ class FileOrganizerPage(ttk.Frame):
         log_frame = ttk.Frame(organizer_card, style="Card.TFrame")
         log_frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(log_frame, text="진행 상황 로그", style="CardTitle.TLabel").pack(anchor="w", pady=(0,10))
-        self.log_text = scrolledtext.ScrolledText(log_frame, font=("Consolas", 10), relief=tk.FLAT, 
-                                                 bg="#fafafa", fg="#5D5D7A", borderwidth=1, state="disabled")
+        self.log_text = scrolledtext.ScrolledText(log_frame, font=("Consolas", 10), relief=tk.FLAT, bg="#fafafa", fg="#5D5D7A", borderwidth=1, state="disabled")
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
     def log_action(self, message):
@@ -540,7 +561,7 @@ class FileOrganizerPage(ttk.Frame):
         self.log_text.insert(tk.END, message + "\n")
         self.log_text.config(state="disabled")
         self.log_text.see(tk.END)
-        self.controller.root.update_idletasks()
+        self.root.update_idletasks() # self.controller.root -> self.root
     
     def select_folder(self):
         folder_selected = filedialog.askdirectory()
@@ -578,11 +599,11 @@ class FileOrganizerPage(ttk.Frame):
                 os.makedirs(destination_path, exist_ok=True)
                 
                 if is_dry_run:
-                    self.log_action(f"[이동 계획 ✔️] '{file_name}' -> '{destination_path}'")
+                    self.log_action(f"[이동 계획 ✔️] '{file_name}' -> '{os.path.basename(destination_path)}'")
                 else:
                     try:
                         shutil.move(source_path, final_destination)
-                        self.log_action(f"[이동 완료 ✅] '{file_name}' -> '{destination_path}'")
+                        self.log_action(f"[이동 완료 ✅] '{file_name}' -> '{os.path.basename(destination_path)}'")
                     except Exception as e:
                         self.log_action(f"[에러] '{file_name}' 이동 실패: {e}")
             else:
@@ -595,11 +616,9 @@ class FileOrganizerPage(ttk.Frame):
                 if platform.system() == "Windows":
                     os.startfile(target_folder)
                 elif platform.system() == "Darwin":
-                    import subprocess
-                    subprocess.call(["open", target_folder])
+                    subprocess.run(["open", target_folder])
                 else:
-                    import subprocess
-                    subprocess.call(["xdg-open", target_folder])
+                    subprocess.run(["xdg-open", target_folder])
             except Exception as e:
                 self.log_action(f"[정보] 폴더를 여는 데 실패했습니다: {e}")
 
@@ -607,9 +626,7 @@ class FileOrganizerPage(ttk.Frame):
         base_dest_path = None
         
         keyword_rules = {
-            '파이썬': os.path.join(target_folder, '파이썬'),
-            '자바': os.path.join(target_folder, '자바'),
-            '알고리즘': os.path.join(target_folder, '알고리즘'),
+            '파이썬': os.path.join(target_folder, '파이썬'), '자바': os.path.join(target_folder, '자바'), '알고리즘': os.path.join(target_folder, '알고리즘'),
         }
 
         for keyword, path in keyword_rules.items():
@@ -626,10 +643,10 @@ class FileOrganizerPage(ttk.Frame):
                 year = "20" + year if len(year) == 2 else year
                 return os.path.join(base_dest_path, f'{year}년', f'{month}월')
             
-            ext = file_name.split('.')[-1].lower()
+            ext = os.path.splitext(file_name)[1].lower().strip('.')
             subfolder_rules = {
                 'pdf': '문서', 'docx': '문서', 'pptx': '문서',
-                'jpg': '이미지', 'png': '이미지', 'gif': '이미지',
+                'jpg': '이미지', 'png': '이미지', 'gif': '이미지', 'jpeg': '이미지',
                 'txt': '노트'
             }
             if ext in subfolder_rules:
@@ -642,15 +659,25 @@ class FileOrganizerPage(ttk.Frame):
                 year = "20" + year if len(year) == 2 else year
                 return os.path.join(target_folder, '날짜별 정리', f'{year}년', f'{month}월')
 
-            ext = file_name.split('.')[-1].lower()
+            ext = os.path.splitext(file_name)[1].lower().strip('.')
             ext_rules = {
-                'pdf': '문서', 'docx': '문서', 'pptx': '문서',
-                'jpg': '이미지', 'png': '이미지', 'gif': '이미지',
+                'pdf': '문서', 'docx': '문서', 'pptx': '문서', 'hwp': '문서',
+                'jpg': '이미지', 'png': '이미지', 'gif': '이미지', 'jpeg': '이미지',
                 'txt': '노트',
-                'zip': '압축파일', 'rar': '압축파일'
+                'zip': '압축파일', 'rar': '압축파일', '7z': '압축파일',
+                'exe': '설치파일', 'msi': '설치파일'
             }
             if ext in ext_rules:
                 return os.path.join(target_folder, ext_rules[ext])
         
         return None
 
+if __name__ == "__main__":
+    if platform.system() == "Windows" and windll is not None:
+        try:
+            windll.shcore.SetProcessDPIAwareness(1)
+        except AttributeError: pass
+
+    root = tk.Tk()
+    app = DesktopAssistant(root)
+    root.mainloop()
