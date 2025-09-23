@@ -7,9 +7,10 @@ import platform
 import shutil
 import re
 from datetime import datetime, time
-import requests
+import requests                     #사용할 때 pip install requests webbrowser feedparser beautifulsoup4 을 먼저 해주세요.
 import webbrowser
 import feedparser
+import subprocess
 from bs4 import BeautifulSoup
 try:
     import pytz
@@ -53,58 +54,36 @@ class school_:
     def get_menu():
         url = "https://www.tw.ac.kr/diet/schedule.do?menuId=1733"
         try:
-            # ▼▼▼▼▼ 태그 유무와 상관없이 작동하는 최종 Selector 입니다. ▼▼▼▼▼
-            # 테이블의 첫 번째 줄(tr)에 있는 th들 (요일)
-            DAY_SELECTOR = "tr:first-child th[scope='col']"
-            # 테이블의 두 번째 줄(tr)에 있는 td들 (메뉴)
-            MENU_SELECTOR = "tr:nth-child(2) td"
-
             res = requests.get(url, timeout=5)
             res.encoding = "utf-8"
             soup = BeautifulSoup(res.text, "html.parser")
             
-            day_elements = soup.select(DAY_SELECTOR)
-            menu_elements = soup.select(MENU_SELECTOR)
+            # 더 구체적인 선택자로 요일과 메뉴 셀을 직접 찾습니다.
+            day_cells = soup.select("div.food_list thead th")[1:]  # '구분' 제외
+            menu_cells = soup.select("div.food_list tbody td")
 
-            # 첫번째 요일 헤더('구분')는 제외
-            day_elements = day_elements[1:]
+            if not day_cells or len(day_cells) != len(menu_cells):
+                return [{"day": "오류", "menu": "요일과 메뉴 셀 개수가 불일치"}]
 
-            print("-" * 30)
-            print(f"[진단] 찾은 요일 항목 수: {len(day_elements)}개")
-            print(f"[진단] 찾은 메뉴 항목 수: {len(menu_elements)}개")
-
-            if not day_elements or not menu_elements or len(day_elements) != len(menu_elements):
-                print("[진단] 오류: 요일과 메뉴의 개수가 맞지 않습니다.")
-                return ["웹사이트 구조 분석 실패"]
-
-            menus = []
-            for day_element, menu_element in zip(day_elements, menu_elements):
-                # '월요일<br>09월 22일' 에서 '09월 22일' 부분만 추출
-                full_date_text = day_element.get_text(separator=' ').strip()
-                date_match = re.search(r'(\d{2})월 (\d{2})일', full_date_text)
+            weekly_menu = []
+            for day_cell, menu_cell in zip(day_cells, menu_cells):
+                # 요일 텍스트만 추출 (예: 월요일(09/22) -> 월요일)
+                day_of_week = day_cell.get_text(strip=True).split('(')[0]
                 
-                if not date_match: continue
-
-                month, day = date_match.groups()
-                date_part = f"{month}/{day}"
-
-                # <br> 태그를 ", "로 교체
-                for br in menu_element.find_all("br"):
-                    br.replace_with(", ")
+                for br in menu_cell.find_all("br"):
+                    br.replace_with("\n") # 쉼표 대신 줄바꿈(\n)으로 변경
                 
-                food = menu_element.get_text(strip=True)
+                food = menu_cell.get_text(strip=True)
+                if not food or food == "-":
+                    food = "정보 없음"
                 
-                if food == "-" or not food:
-                    menus.append(f"{date_part}: 내용 없음")
-                else:
-                    menus.append(f"{date_part}: {food}")
+                weekly_menu.append({"day": day_of_week, "menu": food})
             
-            print("[진단] 메뉴 파싱 성공!")
-            return menus
+            return weekly_menu
             
         except Exception as e:
-            print(f"[진단] 코드 실행 중 예외 발생: {e}")
-            return [f"메뉴 불러오기 실패: {e}"]
+            print(f"[진단] 학식 메뉴 파싱 중 예외 발생: {e}")
+            return [{"day": "오류", "menu": f"메뉴 불러오기 실패: {e}"}]
 
 # --- 메인 애플리케이션 클래스 ---
 class DesktopAssistant:
@@ -212,8 +191,8 @@ class DashboardPage(ttk.Frame):
         dashboard_frame.pack(fill=tk.BOTH, expand=True)
         dashboard_frame.grid_columnconfigure(0, weight=2, uniform="group1")
         dashboard_frame.grid_columnconfigure(1, weight=3, uniform="group1")
-        dashboard_frame.grid_rowconfigure(0, weight=1, minsize=300) # 최소 높이 지정
-        dashboard_frame.grid_rowconfigure(1, weight=1, minsize=300) # 최소 높이 지정
+        dashboard_frame.grid_rowconfigure(0, weight=1, minsize=200) # 최소 높이 지정
+        dashboard_frame.grid_rowconfigure(1, weight=1, minsize=400) # 최소 높이 지정
 
         left_frame = ttk.Frame(dashboard_frame, style="Main.TFrame")
         left_frame.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 20))
@@ -333,18 +312,63 @@ class DashboardPage(ttk.Frame):
         frame = ttk.Frame(parent, style="Card.TFrame", padding=20)
         ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(fill=tk.X, anchor="w", pady=(0, 15))
         return frame
+    
+    def _on_menu_column_configure(self, event):
+        # event.widget은 크기가 변경된 col_frame을 의미합니다.
+        # 이 프레임의 현재 너비를 가져옵니다.
+        new_width = event.widget.winfo_width()
+        # 이 프레임에 연결된 menu_label을 찾아 wraplength를 업데이트합니다.
+        event.widget.menu_label.config(wraplength=new_width - 10)
         
     def create_schedule_card(self, parent):
-        frame = self.create_card_frame(parent, "📚 다음 수업 & 학식")
-        self.schedule_time_label = ttk.Label(frame, text="시간표 정보 로딩 중...", style="ScheduleTime.TLabel")
-        self.schedule_time_label.pack(anchor="w", padx=10, pady=(0, 5))
-        self.schedule_subject_label = ttk.Label(frame, text="", style="ScheduleSubject.TLabel")
-        self.schedule_subject_label.pack(anchor="w", padx=10, pady=(0, 5))
-        self.schedule_room_label = ttk.Label(frame, text="", style="CardBody.TLabel")
-        self.schedule_room_label.pack(anchor="w", padx=10)
-        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=15)
-        self.menu_label = ttk.Label(frame, text="🍚 오늘의 학식: 로딩 중...", style="CardBody.TLabel")
-        self.menu_label.pack(anchor="w", padx=10)
+        frame = self.create_card_frame(parent, "📚 다음 수업 & 주간 학식")
+        
+        class_info_frame = ttk.Frame(frame, style="Card.TFrame")
+        class_info_frame.pack(fill=tk.X, padx=10, pady=(0, 15))
+        
+        self.schedule_time_label = ttk.Label(class_info_frame, text="시간표 정보 로딩 중...", style="ScheduleTime.TLabel")
+        self.schedule_time_label.pack(anchor="w")
+        self.schedule_subject_label = ttk.Label(class_info_frame, text="", style="ScheduleSubject.TLabel")
+        self.schedule_subject_label.pack(anchor="w")
+        self.schedule_room_label = ttk.Label(class_info_frame, text="", style="CardBody.TLabel")
+        self.schedule_room_label.pack(anchor="w")
+        
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=(0, 15))
+        
+        menu_table_frame = ttk.Frame(frame, style="Card.TFrame")
+        menu_table_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+
+        for i in range(5):
+            menu_table_frame.grid_columnconfigure(i, weight=1, uniform="menu_col")
+
+        self.menu_columns = []
+        days = ["월", "화", "수", "목", "금"]
+        
+        for i, day in enumerate(days):
+            col_frame = ttk.Frame(menu_table_frame, style="Card.TFrame")
+            col_frame.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
+
+            day_label = ttk.Label(col_frame, text=day, style="MenuDay.TLabel")
+            day_label.pack(fill=tk.X, pady=(0, 5))
+            
+            ttk.Separator(col_frame, orient='horizontal').pack(fill='x', pady=(0, 8))
+            
+            menu_label = ttk.Label(col_frame, text="로딩 중...", style="MenuBody.TLabel", justify=tk.LEFT)
+            menu_label.pack(fill=tk.BOTH, expand=True)
+            
+            # ▼▼▼ 핵심 수정 부분 ▼▼▼
+            # 각 열 프레임(col_frame)에 메뉴 라벨을 속성으로 저장
+            col_frame.menu_label = menu_label 
+            # 각 열 프레임의 크기가 변경될 때마다(_on_menu_column_configure) 함수를 호출하도록 연결
+            col_frame.bind("<Configure>", self._on_menu_column_configure)
+            # ▲▲▲ 여기까지 수정 ▲▲▲
+
+            self.menu_columns.append({
+                "frame": col_frame,
+                "day_label": day_label,
+                "menu_label": menu_label
+            })
+            
         return frame
         
     def create_briefing_card(self, parent):
@@ -438,22 +462,30 @@ class DashboardPage(ttk.Frame):
             webbrowser.open_new_tab(url)
 
     def update_menu(self):
-        menus = school_.get_menu()
-        if menus and "메뉴 불러오기 실패" not in menus[0]:
-            today_str = datetime.now().strftime("%m/%d")
-            found_menu = None
-            for menu_string in menus:
-                date_part = menu_string.split('(')[0]
-                if date_part == today_str:
-                    found_menu = menu_string
-                    break
-            if found_menu:
-                display_menu = found_menu.split(': ', 1)[1]
-                self.menu_label.config(text="🍚 오늘의 학식: " + display_menu)
+        weekly_menus = school_.get_menu()
+        today_weekday_str = ["월", "화", "수", "목", "금", "토", "일"][datetime.now().weekday()]
+
+        if not weekly_menus or "오류" in weekly_menus[0]["day"]:
+            error_msg = weekly_menus[0]["menu"] if weekly_menus else "학식 정보를 불러올 수 없습니다."
+            for col in self.menu_columns:
+                col["menu_label"].config(text=error_msg)
+            return
+
+        for i, menu_data in enumerate(weekly_menus):
+            if i >= len(self.menu_columns): break
+
+            col_ui = self.menu_columns[i]
+            # wraplength 설정 코드를 여기서 제거합니다.
+            col_ui["menu_label"].config(text=menu_data["menu"])
+
+            if menu_data["day"].startswith(today_weekday_str):
+                col_ui["frame"].config(style="Today.TFrame")
+                col_ui["day_label"].config(style="Today.MenuDay.TLabel")
+                col_ui["menu_label"].config(style="Today.MenuBody.TLabel")
             else:
-                self.menu_label.config(text="🍚 오늘의 학식 정보를 찾을 수 없습니다.")
-        else:
-            self.menu_label.config(text=menus[0] if menus else "🍚 메뉴를 불러올 수 없습니다.")
+                col_ui["frame"].config(style="Card.TFrame")
+                col_ui["day_label"].config(style="MenuDay.TLabel")
+                col_ui["menu_label"].config(style="MenuBody.TLabel")
 
     def open_weather_website(self, event=None):
         """OpenWeatherMap의 서울 날씨 페이지를 엽니다."""
@@ -561,12 +593,25 @@ class FileOrganizerPage(ttk.Frame):
         self.log_text.insert(tk.END, message + "\n")
         self.log_text.config(state="disabled")
         self.log_text.see(tk.END)
-        self.root.update_idletasks() # self.controller.root -> self.root
+        self.controller.root.update_idletasks() # self.root를 self.controller.root
     
     def select_folder(self):
         folder_selected = filedialog.askdirectory()
         if folder_selected:
             self.folder_path_var.set(folder_selected)
+
+    def find_keyword_in_file(self, file_path, keywords):
+        """TXT 파일의 내용을 읽고, 지정된 키워드 목록 중 하나라도 포함되어 있는지 확인합니다."""
+        try:
+            # 파일을 utf-8 형식으로 엽니다. 다른 형식의 파일이 있다면 encoding을 변경해야 할 수 있습니다.
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                for keyword in keywords:
+                    if keyword in content:
+                        return keyword # 키워드를 찾으면 해당 키워드를 반환
+        except Exception as e:
+            self.log_action(f"[경고] '{os.path.basename(file_path)}' 파일 읽기 실패: {e}")
+        return None # 키워드를 찾지 못하면 None을 반환
 
     def start_organization(self):
         target_folder = self.folder_path_var.get()
@@ -587,6 +632,17 @@ class FileOrganizerPage(ttk.Frame):
             self.log_action(f"[에러] '{target_folder}' 폴더를 찾을 수 없습니다.")
             return
 
+        # ▼▼▼ 새로 추가된 디버깅 코드 ▼▼▼
+        # 선택한 폴더에서 찾은 파일 목록을 먼저 보여줍니다.
+        self.log_action(f"\n====== '{os.path.basename(target_folder)}' 폴더에서 발견된 파일 목록 ======")
+        if not file_list:
+            self.log_action(" -> 폴더가 비어있거나 파일을 찾을 수 없습니다.")
+        else:
+            for f_name in file_list:
+                self.log_action(f" -> {f_name}")
+        self.log_action("====================================================\n")
+        # ▲▲▲ 여기까지 추가 ▲▲▲
+
         for file_name in file_list:
             source_path = os.path.join(target_folder, file_name)
             if os.path.isdir(source_path):
@@ -595,15 +651,15 @@ class FileOrganizerPage(ttk.Frame):
             destination_path = self.get_destination_path(target_folder, file_name)
 
             if destination_path:
-                final_destination = os.path.join(destination_path, file_name)
+                final_destination_file_path = os.path.join(destination_path, file_name)
                 os.makedirs(destination_path, exist_ok=True)
                 
                 if is_dry_run:
-                    self.log_action(f"[이동 계획 ✔️] '{file_name}' -> '{os.path.basename(destination_path)}'")
+                    self.log_action(f"[이동 계획 ✔️] '{file_name}' -> '{os.path.relpath(destination_path, target_folder)}' 폴더")
                 else:
                     try:
-                        shutil.move(source_path, final_destination)
-                        self.log_action(f"[이동 완료 ✅] '{file_name}' -> '{os.path.basename(destination_path)}'")
+                        shutil.move(source_path, final_destination_file_path)
+                        self.log_action(f"[이동 완료 ✅] '{file_name}' -> '{os.path.relpath(destination_path, target_folder)}' 폴더")
                     except Exception as e:
                         self.log_action(f"[에러] '{file_name}' 이동 실패: {e}")
             else:
@@ -623,54 +679,54 @@ class FileOrganizerPage(ttk.Frame):
                 self.log_action(f"[정보] 폴더를 여는 데 실패했습니다: {e}")
 
     def get_destination_path(self, target_folder, file_name):
-        base_dest_path = None
-        
+        # --- 1순위: 과목 폴더 결정 ---
+        subject_path = None
+        # 이곳에 '파일이름에 포함될 키워드': '실제 생성될 폴더명'을 추가/수정하세요.
         keyword_rules = {
-            '파이썬': os.path.join(target_folder, '파이썬'), '자바': os.path.join(target_folder, '자바'), '알고리즘': os.path.join(target_folder, '알고리즘'),
+            '파이썬': '파이썬',
+            '파이' : '파이썬',
+            'python': '파이썬',
+            '자바': '자바',
+            'java': '자바',
+            '알고리즘': '알고리즘',
+            '웹 프로그래밍': '웹 프로그래밍',
+            '웹프로그래밍' : '웹 프로그래밍',
+            '웹 코드' : '웹 프로그래밍'
         }
 
-        for keyword, path in keyword_rules.items():
+        for keyword, folder_name in keyword_rules.items():
             if keyword in file_name.lower():
-                base_dest_path = path
+                subject_path = os.path.join(target_folder, folder_name)
                 break
         
+        if not subject_path:
+            subject_path = os.path.join(target_folder, '미분류')
+
+        # --- 2순위: 날짜 폴더 결정 ---
+        date_folder_name = ""
         date_pattern = re.compile(r'(\d{4}|\d{2})[-._]?(\d{2})[-._]?(\d{2})')
         match = date_pattern.search(file_name)
 
-        if base_dest_path:
-            if match:
-                year, month, _ = match.groups()
-                year = "20" + year if len(year) == 2 else year
-                return os.path.join(base_dest_path, f'{year}년', f'{month}월')
-            
-            ext = os.path.splitext(file_name)[1].lower().strip('.')
-            subfolder_rules = {
-                'pdf': '문서', 'docx': '문서', 'pptx': '문서',
-                'jpg': '이미지', 'png': '이미지', 'gif': '이미지', 'jpeg': '이미지',
-                'txt': '노트'
-            }
-            if ext in subfolder_rules:
-                return os.path.join(base_dest_path, subfolder_rules[ext])
-            
-            return base_dest_path
+        if match:
+            year, month, day = match.groups()
+            year = "20" + year if len(year) == 2 else year
+            date_folder_name = f"{year}.{month}.{day}"
         else:
-            if match:
-                year, month, _ = match.groups()
-                year = "20" + year if len(year) == 2 else year
-                return os.path.join(target_folder, '날짜별 정리', f'{year}년', f'{month}월')
+            date_folder_name = datetime.now().strftime('%Y.%m.%d')
+            
+        path_with_date = os.path.join(subject_path, date_folder_name)
 
-            ext = os.path.splitext(file_name)[1].lower().strip('.')
-            ext_rules = {
-                'pdf': '문서', 'docx': '문서', 'pptx': '문서', 'hwp': '문서',
-                'jpg': '이미지', 'png': '이미지', 'gif': '이미지', 'jpeg': '이미지',
-                'txt': '노트',
-                'zip': '압축파일', 'rar': '압축파일', '7z': '압축파일',
-                'exe': '설치파일', 'msi': '설치파일'
-            }
-            if ext in ext_rules:
-                return os.path.join(target_folder, ext_rules[ext])
+        # --- 3순위: 확장자 폴더 결정 ---
+        ext = os.path.splitext(file_name)[1].lower().strip('.')
         
-        return None
+        # ▼▼▼ 오타 수정 부분 ▼▼▼
+        if not ext:
+            # 확장자가 없는 파일은 날짜 폴더 경로를 바로 반환
+            return path_with_date # 'path_with_data' -> 'path_with_date'로 수정
+        
+        final_path = os.path.join(path_with_date, ext)
+        
+        return final_path
 
 if __name__ == "__main__":
     if platform.system() == "Windows" and windll is not None:
