@@ -6,5 +6,13 @@
     {
         "task": "파이썬 단어 공부",
         "highlighted": false
+    },
+    {
+        "task": "파이썬 발표하기",
+        "highlighted": false
+    },
+    {
+        "task": "파이썬 ",
+        "highlighted": true
     }
 ]

@@ -6,13 +6,21 @@ import random
 import platform
 import shutil
 import re
-from datetime import datetime, time
+from datetime import datetime, time as dt_time
+import time
 import requests                     #사용할 때 pip install requests webbrowser feedparser beautifulsoup4 을 먼저 해주세요.
 import webbrowser
 import feedparser
 import subprocess
+from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    #from webdriver_manager.chrome import ChromeDriverManager
     import pytz
 except ImportError:
     pytz = None
@@ -53,37 +61,81 @@ class school_:
     @staticmethod
     def get_menu():
         url = "https://www.tw.ac.kr/diet/schedule.do?menuId=1733"
+        
+        options = webdriver.ChromeOptions()
+        options.add_argument('--headless')  # 브라우저 창을 띄우지 않음
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        # 불필요한 로그 메시지 제거
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        
+        driver = None
         try:
-            res = requests.get(url, timeout=5)
-            res.encoding = "utf-8"
-            soup = BeautifulSoup(res.text, "html.parser")
+            # ChromeDriver를 자동으로 설치 및 관리합니다.
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
+            driver.get(url)
             
-            # 더 구체적인 선택자로 요일과 메뉴 셀을 직접 찾습니다.
-            day_cells = soup.select("div.food_list thead th")[1:]  # '구분' 제외
-            menu_cells = soup.select("div.food_list tbody td")
+            # 페이지의 식단표 테이블('tbl')이 로드될 때까지 최대 10초간 기다립니다.
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "tbl"))
+            )
+            
+            html = driver.page_source
+            soup = BeautifulSoup(html, "html.parser")
 
-            if not day_cells or len(day_cells) != len(menu_cells):
-                return [{"day": "오류", "menu": "요일과 메뉴 셀 개수가 불일치"}]
+            # thead의 첫 번째 tr에 있는 th들을 모두 선택 (요일)
+            day_cells = soup.select("thead tr:first-child th")
+            # tbody의 첫 번째 tr에 있는 td들을 모두 선택 (메뉴)
+            menu_cells = soup.select("tbody tr:first-child td")
+
+            # [진단용 출력]
+            print("-" * 30)
+            print(f"[진단] 찾은 요일 셀 개수: {len(day_cells)}개")
+            print(f"[진단] 찾은 메뉴 셀 개수: {len(menu_cells)}개")
+            
+            # 첫 번째 요일 셀("구분")은 제외하고 리스트를 다시 만듭니다.
+            day_cells = day_cells[1:]
+
+            # 요일과 메뉴의 개수가 다르면 오류를 반환합니다.
+            if len(day_cells) != len(menu_cells):
+                print("[진단] 오류: 요일과 메뉴 셀 개수가 일치하지 않습니다.")
+                return [{"day": "오류", "menu": "웹사이트 구조 분석 실패"}]
 
             weekly_menu = []
             for day_cell, menu_cell in zip(day_cells, menu_cells):
-                # 요일 텍스트만 추출 (예: 월요일(09/22) -> 월요일)
-                day_of_week = day_cell.get_text(strip=True).split('(')[0]
+                # "월요일<br>09월 22일" 형태에서 "월요일"만 추출합니다.
+                day_of_week = day_cell.get_text(separator=" ").split()[0]
                 
+                # 메뉴 셀 내부의 <br> 태그를 줄바꿈(\n) 문자로 변경합니다.
                 for br in menu_cell.find_all("br"):
-                    br.replace_with("\n") # 쉼표 대신 줄바꿈(\n)으로 변경
+                    br.replace_with("\n")
                 
+                # 공백을 제거하여 메뉴 텍스트를 추출합니다.
                 food = menu_cell.get_text(strip=True)
+                
+                # 메뉴 내용이 없거나 "-" 이면 "정보 없음"으로 표시합니다.
                 if not food or food == "-":
                     food = "정보 없음"
                 
                 weekly_menu.append({"day": day_of_week, "menu": food})
             
+            print("[진단] 학식 메뉴 파싱 성공!")
             return weekly_menu
             
         except Exception as e:
             print(f"[진단] 학식 메뉴 파싱 중 예외 발생: {e}")
-            return [{"day": "오류", "menu": f"메뉴 불러오기 실패: {e}"}]
+            return [{"day": "오류", "menu": "메뉴를 불러올 수 없습니다."}]
+        finally:
+            # 드라이버가 실행되었다면 반드시 종료합니다.
+            if driver:
+                driver.quit()
+
+# --- 코드 테스트 ---
+if __name__ == '__main__':
+    menus = school_.get_menu()
+    for menu in menus:
+        print(f"[{menu['day']}]\n{menu['menu']}\n\n")
 
 # --- 메인 애플리케이션 클래스 ---
 class DesktopAssistant:
@@ -278,8 +330,8 @@ class DashboardPage(ttk.Frame):
 
             if today_schedule:
                 for class_info in today_schedule:
-                    start_time = time.fromisoformat(class_info["start"])
-                    end_time = time.fromisoformat(class_info["end"]) # 종료 시간도 가져옴
+                    start_time = dt_time.fromisoformat(class_info["start"])
+                    end_time = dt_time.fromisoformat(class_info["end"]) # 종료 시간도 가져옴
 
                     # 1. '현재 진행 중인 수업'이 있는지 먼저 확인
                     if start_time <= current_time < end_time:
@@ -508,7 +560,7 @@ class DashboardPage(ttk.Frame):
                 widget.config(style="Card.TFrame")
             else:
                 widget.config(style="CardBody.TLabel")
-    
+            
     def save_todo_items(self):
         with open(self.todo_file, 'w', encoding='utf-8') as f:
             json.dump(self.todo_items, f, ensure_ascii=False, indent=4)
@@ -523,7 +575,7 @@ class DashboardPage(ttk.Frame):
         else:
             # font 옵션을 제거하고 기본 색상으로 되돌립니다.
             self.todo_listbox.itemconfig(index, {'fg': '#5D5D7A'})
-    
+
     def add_todo_item(self):
         task = self.todo_entry.get()
         if task:
